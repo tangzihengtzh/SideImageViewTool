@@ -48,7 +48,9 @@ void Pin::paint() {
 }
 void Pin::menu(POINT p) {
     HMENU m=CreatePopupMenu();AppendMenuW(m,MF_STRING,1,L"复制原图");AppendMenuW(m,MF_STRING,2,L"恢复 100%");AppendMenuW(m,MF_STRING,3,L"适合屏幕");AppendMenuW(m,MF_STRING|(nearest_?MF_CHECKED:0),4,L"像素清晰模式（最近邻缩放）");AppendMenuW(m,MF_STRING,5,L"定位历史文件");AppendMenuW(m,MF_STRING,6,L"恢复不透明");AppendMenuW(m,MF_STRING|MF_DISABLED,0,L"大图查看：Ctrl + 拖动 / 中键拖动");AppendMenuW(m,MF_SEPARATOR,0,nullptr);AppendMenuW(m,MF_STRING,7,L"关闭便签（保留原图）");
+    InsertMenuW(m,1,MF_BYPOSITION|MF_STRING,8,L"复制文件（粘贴到文件夹）");
     SetForegroundWindow(hwnd);UINT c=TrackPopupMenu(m,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,hwnd,nullptr);DestroyMenu(m);PostMessageW(hwnd,WM_NULL,0,0);
+    if(c==8){app_.copyRecordFile(record_);return;}
     if(c==1){if(!copyPicture(hwnd,*image_))app_.notify(L"复制失败，剪贴板可能被其他程序占用。",true);}else if(c==2)resize(1,p);else if(c==3){MONITORINFO info{sizeof(info)};GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&info);float fit=std::min(float(info.rcWork.right-info.rcWork.left-4)/image_->w,(info.rcWork.bottom-info.rcWork.top-36*scaleFor(hwnd)-4)/image_->h);resize(fit,p);}else if(c==4){nearest_=!nearest_;InvalidateRect(hwnd,nullptr,FALSE);}else if(c==5)app_.openRecord(record_->path);else if(c==6){opacity_=255;SetLayeredWindowAttributes(hwnd,0,255,LWA_ALPHA);}else if(c==7)PostMessageW(hwnd,WM_CLOSE,0,0);
 }
 LRESULT Pin::message(UINT msg,WPARAM wp,LPARAM lp) {

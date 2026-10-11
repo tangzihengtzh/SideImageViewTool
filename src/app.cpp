@@ -14,6 +14,7 @@ bool App::init(fs::path directory,bool testing) {
     testMode=testing;data=std::move(directory);std::error_code ec;fs::create_directories(data/L"history",ec);
     if(ec) { if(testing)return false;PWSTR local=nullptr;if(FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,0,nullptr,&local)))return false;data=fs::path(local)/L"ScreenDock";CoTaskMemFree(local);ec.clear();fs::create_directories(data/L"history",ec);if(ec)return false; }
     history=data/L"history";config=data/L"settings.ini";
+    if(!historyIndex_.load(data/L"history-index.txt"))return false;
     edge=Edge(std::clamp(GetPrivateProfileIntW(L"dock",L"edge",1,config.c_str()),0u,3u));
     monitor=GetPrivateProfileIntW(L"dock",L"monitor",0,config.c_str());autoPin=GetPrivateProfileIntW(L"dock",L"autoPin",1,config.c_str())!=0;
     updateMonitors();if(displays.empty())return false;
@@ -29,7 +30,7 @@ bool App::init(fs::path directory,bool testing) {
 void App::loadHistory() {
     records.clear();std::error_code ec;
     for(fs::directory_iterator it(history,ec),last;!ec && it!=last;it.increment(ec)) {
-        if(it->is_regular_file(ec) && it->path().extension()==L".png") {auto r=std::make_shared<Record>();r->path=it->path();r->label=friendlyTime(r->path);records.push_back(std::move(r));}
+        if(it->is_regular_file(ec) && it->path().extension()==L".png" && !historyIndex_.contains(it->path())) {auto r=std::make_shared<Record>();r->path=it->path();r->label=friendlyTime(r->path);records.push_back(std::move(r));}
     }
     std::sort(records.begin(),records.end(),[](const auto& a,const auto& b){return a->path.filename()>b->path.filename();});
     if(dock)dock->refresh(true);
@@ -60,7 +61,13 @@ std::shared_ptr<Record> App::add(Picture image,bool pinNow) {
     worker_->push([r,image,recipient] {bool good=false;try{good=savePng(*image,r->path);}catch(...){good=false;}auto* result=new SaveResult{r,good};if(!PostMessageW(recipient,SaveDone,0,reinterpret_cast<LPARAM>(result)))delete result;});
     if(pinNow)pin(r);return r;
 }
-void App::saveComplete(SaveResult* raw) {std::unique_ptr<SaveResult> result(raw);if(!result)return;result->record->saving=false;result->record->failed=!result->success; if(result->success)result->record->pending.reset();else notify(L"PNG 保存失败，图片仍留在内存中。请检查目录权限和磁盘空间；可在便签中复制原图。",true);dock->refresh();}
+void App::saveComplete(SaveResult* raw) {
+    std::unique_ptr<SaveResult> result(raw);if(!result)return;auto record=result->record;
+    record->saving=false;record->failed=!result->success;
+    if(result->success){record->pending.reset();if(!historyIndex_.contains(record->path) && std::none_of(records.begin(),records.end(),[&](const auto& r){return r->path==record->path;})){records.push_back(record);std::sort(records.begin(),records.end(),[](const auto& a,const auto& b){return a->path.filename()>b->path.filename();});}}
+    else notify(L"PNG 保存失败，图片仍留在内存中。请检查目录权限和磁盘空间；可在便签中复制原图。",true);
+    dock->refresh();
+}
 void App::requestThumbnail(const std::shared_ptr<Record>& record) {
     if(!worker_ || record->previewLoading || record->previewFailed || record->saving || record->thumb)return;
     record->previewLoading=true;HWND recipient=dock->hwnd;
@@ -73,6 +80,23 @@ void App::pin(std::shared_ptr<Record> record) {
     auto p=std::make_unique<Pin>(*this,record,image);if(p->create(int(pins.size())))pins.push_back(std::move(p));else notify(L"无法创建置顶便签。",true);
 }
 void App::removePin(Pin* pinToRemove) {pins.erase(std::remove_if(pins.begin(),pins.end(),[&](const auto& p){return p.get()==pinToRemove;}),pins.end());if(dock)dock->refresh();}
+bool App::hideRecord(const std::shared_ptr<Record>& record) {
+    auto found=std::find(records.begin(),records.end(),record);if(found==records.end())return false;
+    if(!historyIndex_.hide(record->path)){notify(L"无法保存列表索引，记录未移出。请检查数据目录权限。",true);return false;}
+    records.erase(found);dock->refresh();return true;
+}
+bool App::restoreHistory() {
+    if(!historyIndex_.restoreAll()){notify(L"无法恢复列表索引，请检查数据目录权限。",true);return false;}
+    // Preserve records whose background PNG write has not completed yet.
+    std::vector<std::shared_ptr<Record>> pending;for(auto& r:records)if(r->saving || r->failed)pending.push_back(r);
+    loadHistory();for(auto& r:pending){records.erase(std::remove_if(records.begin(),records.end(),[&](const auto& x){return x->path==r->path;}),records.end());records.push_back(r);}
+    std::sort(records.begin(),records.end(),[](const auto& a,const auto& b){return a->path.filename()>b->path.filename();});dock->refresh(true);return true;
+}
+bool App::copyRecordFile(const std::shared_ptr<Record>& record) {
+    if(record->saving){notify(L"图片仍在保存，请稍后再复制文件。");return false;}
+    if(record->failed || !copyFile(dock->hwnd,record->path)){notify(L"复制文件失败：原图可能已移走，或剪贴板正被其他程序占用。",true);return false;}
+    return true;
+}
 void App::paste() {auto image=pastePicture(dock->hwnd);if(image)add(image,autoPin);else notify(L"剪贴板没有可读取的图片。先复制图片，再点“粘贴”。");}
 void App::setEdge(Edge value) {edge=value;saveConfig();dock->reposition();}
 void App::setMonitor(size_t index) {if(index<displays.size()){monitor=index;saveConfig();dock->reposition();}}

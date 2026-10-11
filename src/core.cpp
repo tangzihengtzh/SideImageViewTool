@@ -3,6 +3,8 @@
 #include <iomanip>
 #include <limits>
 #include <cmath>
+#include <shellapi.h>
+#include <shlobj.h>
 
 namespace sd {
 bool Pixels::valid() const { return w>0 && h>0 && w<=32768 && h<=32768 && bgra.size()==size_t(w)*h*4; }
@@ -12,7 +14,7 @@ RECT dockRect(RECT work, Edge edge, bool expanded, int dpi) {
     const int u=MulDiv(expanded?310:12,dpi,96), v=MulDiv(expanded?640:112,dpi,96);
     const int width=work.right-work.left, height=work.bottom-work.top;
     int w=std::min(u,width), h=std::min(v,height);
-    if (edge==Edge::Top || edge==Edge::Bottom) { w=std::min(v,width); h=std::min(u,height); }
+    if (edge==Edge::Top || edge==Edge::Bottom) { w=std::min(v,width); h=std::min(MulDiv(expanded?360:12,dpi,96),height); }
     int x=work.left+(width-w)/2, y=work.top+(height-h)/2;
     if(edge==Edge::Left) x=work.left;
     if(edge==Edge::Right) x=work.right-w;
@@ -109,6 +111,30 @@ bool copyPicture(HWND owner, const Pixels& image) {
     BYTE* output=reinterpret_cast<BYTE*>(header+1);memcpy(output,image.bgra.data(),image.bgra.size());
     for(size_t i=0;i<image.bgra.size();i+=4) { BYTE a=output[i+3];if(a && a!=255) for(int c=0;c<3;++c) output[i+c]=BYTE(std::min(255,output[i+c]*255/a)); }
     GlobalUnlock(data);EmptyClipboard();bool success=SetClipboardData(CF_DIBV5,data)!=nullptr;if(!success)GlobalFree(data);CloseClipboard();return success;
+}
+HGLOBAL fileDropData(const fs::path& path) {
+    std::error_code ec;fs::path absolute=fs::absolute(path,ec);
+    if(ec || !fs::is_regular_file(absolute,ec) || ec)return nullptr;
+    auto value=absolute.lexically_normal().wstring();
+    size_t bytes=sizeof(DROPFILES)+(value.size()+2)*sizeof(wchar_t);
+    HGLOBAL data=GlobalAlloc(GMEM_MOVEABLE|GMEM_ZEROINIT,bytes);if(!data)return nullptr;
+    auto* drop=static_cast<DROPFILES*>(GlobalLock(data));if(!drop){GlobalFree(data);return nullptr;}
+    drop->pFiles=sizeof(DROPFILES);drop->fWide=TRUE;
+    memcpy(reinterpret_cast<BYTE*>(drop)+sizeof(DROPFILES),value.c_str(),(value.size()+1)*sizeof(wchar_t));
+    GlobalUnlock(data);return data;
+}
+bool copyFile(HWND owner,const fs::path& path) {
+    HGLOBAL files=fileDropData(path);if(!files)return false;
+    UINT preferred=RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT);
+    HGLOBAL effect=GlobalAlloc(GMEM_MOVEABLE,sizeof(DWORD));
+    auto* value=effect?static_cast<DWORD*>(GlobalLock(effect)):nullptr;
+    if(!preferred || !value){if(effect)GlobalFree(effect);GlobalFree(files);return false;}
+    *value=DROPEFFECT_COPY;GlobalUnlock(effect);
+    if(!OpenClipboard(owner)){GlobalFree(files);GlobalFree(effect);return false;}
+    if(!EmptyClipboard()){CloseClipboard();GlobalFree(files);GlobalFree(effect);return false;}
+    if(!SetClipboardData(CF_HDROP,files)){CloseClipboard();GlobalFree(files);GlobalFree(effect);return false;}
+    if(!SetClipboardData(preferred,effect)){EmptyClipboard();CloseClipboard();GlobalFree(effect);return false;}
+    CloseClipboard();return true;
 }
 Picture pastePicture(HWND owner) {
     if(!OpenClipboard(owner)) return {};

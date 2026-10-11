@@ -1,5 +1,6 @@
 #pragma once
 #include "ui.h"
+#include "history_index.h"
 #include <shellapi.h>
 namespace sd {
 constexpr UINT TrayMessage=WM_APP+1, SaveDone=WM_APP+2, CaptureDone=WM_APP+3, RemovePin=WM_APP+4, ThumbDone=WM_APP+5;
@@ -12,7 +13,8 @@ class App;class Pin;class Capture;
 class Dock {
     App& app_;Graphics graphics_;POINT mouse_{-1,-1};
     size_t first_=0;int thumbSize_=120;bool tracking_=false;
-    std::vector<std::pair<size_t,D2D1_RECT_F>> cards_;
+    struct CardHit {size_t index;D2D1_RECT_F body,copyFile,remove;};
+    std::vector<CardHit> cards_;fs::path copiedPath_;ULONGLONG copiedUntil_=0;
     D2D1_RECT_F shot_{},paste_{},folder_{},menu_{},previous_{},next_{};
     void paint();LRESULT message(UINT,WPARAM,LPARAM);
     static LRESULT CALLBACK proc(HWND,UINT,WPARAM,LPARAM);
@@ -21,6 +23,7 @@ public:
     explicit Dock(App& app):app_(app){};~Dock();
     bool create();void expand(bool value);void reposition();void refresh(bool newest=false);void showMenu(POINT p);
     int thumbnailSize() const {return thumbSize_;}
+    bool recordButtons(const fs::path& path,RECT& copy,RECT& remove) const;
 };
 class Pin {
     App& app_;Graphics graphics_;std::shared_ptr<Record> record_;Picture image_;
@@ -48,6 +51,7 @@ struct ThumbResult {std::shared_ptr<Record> record;Picture image;};
 class App {
     HICON icon_=nullptr;bool trayAdded_=false;std::unique_ptr<Worker> worker_;
     std::atomic<unsigned> sequence_{0};
+    HistoryIndex historyIndex_;
 public:
     HINSTANCE instance;fs::path data,history,config;std::unique_ptr<Dock> dock;
     std::vector<std::shared_ptr<Record>> records;std::vector<std::unique_ptr<Pin>> pins;std::unique_ptr<Capture> capture;
@@ -61,7 +65,9 @@ public:
     void paste();void setEdge(Edge value);void setMonitor(size_t index);void hidePins(bool hidden);
     void saveComplete(SaveResult* result);void shutdown();LRESULT controller(UINT,WPARAM,LPARAM,bool& handled);
     void requestThumbnail(const std::shared_ptr<Record>& record);
+    bool hideRecord(const std::shared_ptr<Record>& record);bool restoreHistory();bool copyRecordFile(const std::shared_ptr<Record>& record);
     HICON icon() const {return icon_;}
 };
 int selfTest(HINSTANCE instance,const fs::path& directory);
+int clipboardSelfTest(const fs::path& source,const fs::path& destination);
 }

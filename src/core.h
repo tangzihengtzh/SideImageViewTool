@@ -32,6 +32,8 @@ Picture readImage(const fs::path& path, UINT maxSide=0);
 bool savePng(const Pixels& image, const fs::path& path);
 Picture captureDesktop(RECT area);
 bool copyPicture(HWND owner, const Pixels& image);
+HGLOBAL fileDropData(const fs::path& path);
+bool copyFile(HWND owner, const fs::path& path);
 Picture pastePicture(HWND owner);
 std::vector<Monitor> monitors();
 std::wstring lastError(DWORD error=GetLastError());

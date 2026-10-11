@@ -3,9 +3,64 @@
 #include <chrono>
 #include <psapi.h>
 #include <dwmapi.h>
+#include <shlobj.h>
 namespace sd {
+class ClipboardSnapshot {
+    struct Entry {UINT format;HANDLE data;std::vector<BYTE> bytes;};std::vector<Entry> entries_;
+    static void release(Entry& entry){if(!entry.data)return;STGMEDIUM medium{};medium.tymed=entry.format==CF_BITMAP || entry.format==CF_DSPBITMAP || entry.format==CF_PALETTE?TYMED_GDI:entry.format==CF_ENHMETAFILE || entry.format==CF_DSPENHMETAFILE?TYMED_ENHMF:entry.format==CF_METAFILEPICT || entry.format==CF_DSPMETAFILEPICT?TYMED_MFPICT:TYMED_HGLOBAL;medium.hGlobal=static_cast<HGLOBAL>(entry.data);ReleaseStgMedium(&medium);entry.data=nullptr;}
+    static bool open(HWND owner){for(int n=0;n<40;++n){if(OpenClipboard(owner))return true;Sleep(10);}return false;}
+public:
+    ~ClipboardSnapshot(){for(auto& entry:entries_)release(entry);}
+    bool capture(HWND owner){
+        if(!open(owner))return false;std::vector<UINT> formats;UINT f=0;SetLastError(0);while((f=EnumClipboardFormats(f)))formats.push_back(f);bool success=GetLastError()==0;
+        for(UINT format:formats){if(!success || format==CF_OWNERDISPLAY){success=false;break;}HANDLE data=GetClipboardData(format);HANDLE duplicate=data?OleDuplicateData(data,CLIPFORMAT(format),0):nullptr;if(!duplicate){success=false;break;}Entry entry{format,duplicate,{}};
+            if(format!=CF_BITMAP && format!=CF_DSPBITMAP && format!=CF_PALETTE && format!=CF_ENHMETAFILE && format!=CF_DSPENHMETAFILE && format!=CF_METAFILEPICT && format!=CF_DSPMETAFILEPICT){SIZE_T size=GlobalSize(static_cast<HGLOBAL>(duplicate));auto* bytes=static_cast<BYTE*>(GlobalLock(static_cast<HGLOBAL>(duplicate)));if(size && bytes)entry.bytes.assign(bytes,bytes+size);if(bytes)GlobalUnlock(static_cast<HGLOBAL>(duplicate));}
+            entries_.push_back(std::move(entry));
+        }CloseClipboard();return success;
+    }
+    bool restore(HWND owner){if(!open(owner))return false;if(!EmptyClipboard()){CloseClipboard();return false;}bool success=true;for(auto& entry:entries_)if(SetClipboardData(entry.format,entry.data))entry.data=nullptr;else success=false;CloseClipboard();return success;}
+    bool verify(HWND owner){if(!open(owner))return false;bool success=true;for(const auto& entry:entries_){HANDLE data=GetClipboardData(entry.format);if(!data){success=false;break;}if(!entry.bytes.empty()){SIZE_T size=GlobalSize(static_cast<HGLOBAL>(data));auto* bytes=static_cast<BYTE*>(GlobalLock(static_cast<HGLOBAL>(data)));if(!bytes || size!=entry.bytes.size() || memcmp(bytes,entry.bytes.data(),size)!=0)success=false;if(bytes)GlobalUnlock(static_cast<HGLOBAL>(data));}}CloseClipboard();return success;}
+};
+int clipboardSelfTest(const fs::path& source,const fs::path& destination) {
+    std::ofstream report(destination.wstring()+L".report.txt");if(!report)return 2;
+    int failures=0;auto check=[&](bool good,const char* name){report<<(good?"PASS ":"FAIL ")<<name<<'\n';if(!good)++failures;return good;};
+    HRESULT com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
+    HWND owner=CreateWindowExW(0,L"STATIC",L"ScreenDock clipboard self-test",WS_POPUP,0,0,32,32,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+    ClipboardSnapshot snapshot;
+    if(!check(owner && snapshot.capture(owner),"all original clipboard formats backed up before testing")){if(owner)DestroyWindow(owner);if(SUCCEEDED(com))CoUninitialize();return 3;}
+    App clipboardApp(GetModuleHandleW(nullptr));bool initialized=clipboardApp.init(destination.parent_path()/(L"clipboard-app-"+std::to_wstring(GetCurrentProcessId())),true);
+    bool clicked=false;
+    if(initialized){auto record=std::make_shared<Record>();record->path=source;record->label=L"文件复制测试";record->thumb=readImage(source,360);clipboardApp.records.push_back(record);clipboardApp.dock->expand(true);SendMessageW(clipboardApp.dock->hwnd,WM_PAINT,0,0);RECT fileButton{},removeButton{};
+        clicked=clipboardApp.dock->recordButtons(source,fileButton,removeButton);if(clicked)SendMessageW(clipboardApp.dock->hwnd,WM_LBUTTONUP,0,MAKELPARAM((fileButton.left+fileButton.right)/2,(fileButton.top+fileButton.bottom)/2));check(clicked && clipboardApp.pins.empty() && clipboardApp.records.size()==1,"real copy-file card click leaves history and pins unchanged");}
+    bool published=clicked && IsClipboardFormatAvailable(CF_HDROP);check(published,"real Windows file clipboard publication");
+    fs::path pastedSource;
+    if(published && OpenClipboard(owner)) {
+        HDROP drop=static_cast<HDROP>(GetClipboardData(CF_HDROP));UINT length=drop?DragQueryFileW(drop,0,nullptr,0):0;
+        std::vector<wchar_t> value(length+1);if(length)DragQueryFileW(drop,0,value.data(),length+1);
+        if(length)pastedSource=value.data();
+        check(drop && DragQueryFileW(drop,0xffffffff,nullptr,0)==1 && pastedSource==fs::absolute(source).lexically_normal(),"CF_HDROP contains one exact Unicode absolute path");
+        HGLOBAL effect=GetClipboardData(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));auto* operation=effect?static_cast<DWORD*>(GlobalLock(effect)):nullptr;
+        check(operation && *operation==DROPEFFECT_COPY,"preferred operation is COPY, never MOVE");if(operation)GlobalUnlock(effect);CloseClipboard();
+        DWORD sequence=GetClipboardSequenceNumber();check(!copyFile(owner,source.parent_path()/L"missing-file.png") && GetClipboardSequenceNumber()==sequence,"missing file does not clear existing clipboard");
+        bool copied=!pastedSource.empty() && CopyFileW(pastedSource.c_str(),destination.c_str(),TRUE);
+        check(copied && fs::exists(source),"folder copy keeps original PNG in place");
+        auto original=readImage(source),copy=readImage(destination);check(original && copy && original->bgra==copy->bgra,"pasted file remains pixel-identical");
+    } else if(published)check(false,"open published clipboard");
+    clipboardApp.shutdown();check(snapshot.restore(owner) && snapshot.verify(owner),"original clipboard formats and bytes restored");
+    if(owner)DestroyWindow(owner);if(SUCCEEDED(com))CoUninitialize();
+    return failures?1:0;
+}
+static bool runClipboardTest(const fs::path& source,const fs::path& destination) {
+    wchar_t exe[32768];if(!GetModuleFileNameW(nullptr,exe,32768))return false;
+    std::wstring args=L"\""+std::wstring(exe)+L"\" --clipboard-test \""+source.wstring()+L"\" \""+destination.wstring()+L"\"";
+    STARTUPINFOW startup{};startup.cb=sizeof(startup);startup.dwFlags=STARTF_USESHOWWINDOW;startup.wShowWindow=SW_HIDE;PROCESS_INFORMATION process{};
+    if(!CreateProcessW(exe,args.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process))return false;
+    DWORD wait=WaitForSingleObject(process.hProcess,10000),exitCode=1;if(wait==WAIT_OBJECT_0)GetExitCodeProcess(process.hProcess,&exitCode);else TerminateProcess(process.hProcess,1);
+    CloseHandle(process.hThread);CloseHandle(process.hProcess);return wait==WAIT_OBJECT_0 && exitCode==0;
+}
 static void pump() {MSG msg;while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){if(msg.message!=WM_QUIT){TranslateMessage(&msg);DispatchMessageW(&msg);}}}
 static bool waitSaved(const std::shared_ptr<Record>& record) {auto until=GetTickCount64()+6000;while(record->saving && GetTickCount64()<until){pump();MsgWaitForMultipleObjects(0,nullptr,FALSE,20,QS_ALLINPUT);}pump();return !record->saving && !record->failed;}
+static void readyPreviews(App& app){auto until=GetTickCount64()+2000;while(GetTickCount64()<until){UpdateWindow(app.dock->hwnd);pump();bool pending=false;for(size_t i=0;i<std::min(size_t(2),app.records.size());++i)pending|=app.records[i]->previewLoading;if(!pending)break;MsgWaitForMultipleObjects(0,nullptr,FALSE,20,QS_ALLINPUT);}UpdateWindow(app.dock->hwnd);}
 static Picture fixture(int revision) {
     auto image=std::make_shared<Pixels>();image->w=640;image->h=380;image->bgra.resize(size_t(image->w)*image->h*4);
     HDC dc=GetDC(nullptr),mem=CreateCompatibleDC(dc);BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=image->w;info.bmiHeader.biHeight=-LONG(image->h);info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;void* bits=nullptr;HBITMAP bmp=CreateDIBSection(dc,&info,DIB_RGB_COLORS,&bits,nullptr,0);auto old=SelectObject(mem,bmp);
@@ -33,13 +88,22 @@ int selfTest(HINSTANCE instance,const fs::path& directory) {
     check(!savePng(*other,fixturePath) && readImage(fixturePath)->bgra==image->bgra,"existing archive is never overwritten");check(!fs::exists(fixturePath.wstring()+L".partial"),"failed save removes temporary file");check(!savePng(*image,directory/L"nonexistent-directory"/L"save.png"),"unwritable target reports failure");
     {std::ofstream bad(directory/L"corrupt.png");bad<<"invalid PNG";}check(!readImage(directory/L"corrupt.png"),"corrupt image rejected");
     auto transparent=std::make_shared<Pixels>();transparent->w=2;transparent->h=1;transparent->bgra={40,60,80,128,0,0,0,0};auto alphaPath=directory/(L"alpha_"+stamp()+L".png");check(savePng(*transparent,alphaPath) && readImage(alphaPath) && readImage(alphaPath)->bgra[3]==128,"alpha PNG preserved");
-    size_t archived=0;
+    fs::path unicodeSource=directory/(L"中文 截图_"+stamp()+L".png"),copyDirectory=directory/L"粘贴 工作文件夹";fs::create_directories(copyDirectory);
+    check(savePng(*image,unicodeSource),"Unicode source file fixture");
+    HGLOBAL fileData=fileDropData(unicodeSource);check(fileData!=nullptr,"Unicode file drop allocation");if(fileData){auto* drop=static_cast<DROPFILES*>(GlobalLock(fileData));auto* names=reinterpret_cast<wchar_t*>(reinterpret_cast<BYTE*>(drop)+drop->pFiles);size_t length=wcslen(names);check(drop->fWide && names[length]==0 && names[length+1]==0,"CF_HDROP uses UTF-16 and double terminator");GlobalUnlock(fileData);GlobalFree(fileData);}
+    check(!fileDropData(directory/L"missing.png"),"missing file rejects file clipboard payload");
+    check(runClipboardTest(unicodeSource,copyDirectory/(L"复制截图_"+stamp()+L".png")),"real clipboard integration, folder copy, and original clipboard restoration");
+    fs::path indexFile=directory/(L"index_"+stamp()+L".txt");HistoryIndex index;check(index.load(indexFile),"empty index initializes");check(index.hide(unicodeSource) && index.contains(unicodeSource),"hide indexes Unicode basename");HistoryIndex reopenedIndex;check(reopenedIndex.load(indexFile) && reopenedIndex.contains(unicodeSource),"hidden index survives reload");check(reopenedIndex.contains(fs::path(L"D:/portable/history")/unicodeSource.filename()),"index is independent of installation directory");check(reopenedIndex.restoreAll() && !reopenedIndex.contains(unicodeSource),"restore clears only exclusions");auto kept=readImage(unicodeSource);check(kept && kept->bgra==image->bgra,"index operations never modify original image pixels");
+    fs::path failureDirectory=directory/(L"index-failure_"+stamp());fs::create_directories(failureDirectory);HistoryIndex failedIndex;check(failedIndex.load(failureDirectory/L"index.txt"),"failure index initializes");fs::create_directory(failureDirectory/L"index.txt.tmp");check(!failedIndex.hide(unicodeSource) && !failedIndex.contains(unicodeSource),"index write failure does not change in-memory exclusions");
+    size_t archived=0;fs::path hiddenAcrossRestart;
     {
         App app(instance);check(app.init(directory/L"app-data",true),"native app initialization");if(!app.dock)return 3;
         app.autoPin=false;check(IsWindow(app.dock->hwnd)!=FALSE,"real dock HWND created");check((GetWindowLongPtrW(app.dock->hwnd,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0,"dock always-on-top style");
         for(int e=0;e<4;++e){app.setEdge(Edge(e));app.dock->expand(true);RECT r;GetWindowRect(app.dock->hwnd,&r);auto m=app.displays[app.monitor].work;bool at=e==0?r.left==m.left:e==1?r.right==m.right:e==2?r.top==m.top:r.bottom==m.bottom;check(at,"native four-edge expanded positioning");app.dock->expand(false);}
         app.setEdge(Edge::Right);app.dock->expand(true);SendMessageW(app.dock->hwnd,WM_MOUSEWHEEL,MAKEWPARAM(0,120),0);check(app.dock->thumbnailSize()==140,"dock wheel enlarges previews");
         auto a=app.add(image,false);check(a && waitSaved(a) && fs::exists(a->path),"asynchronous PNG archive completion");auto b=app.add(other,false);check(b && waitSaved(b),"second independent screenshot archive");
+        auto pending=app.add(image,false);check(app.hideRecord(pending),"remove history while background save is pending");check(waitSaved(pending) && fs::exists(pending->path) && std::none_of(app.records.begin(),app.records.end(),[&](const auto& r){return r->path==pending->path;}),"background save finishes without resurrecting hidden record");
+        check(app.restoreHistory(),"restore history after pending save");
         app.pin(a);app.pin(b);check(app.pins.size()==2,"multiple pinned image windows");app.pin(a);check(app.pins.size()==2,"pin same screenshot reuses existing window");
         if(!app.pins.empty()) {
             auto& pin=app.pins.front();check((GetWindowLongPtrW(pin->hwnd,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0,"pin always-on-top style");RECT r;GetWindowRect(pin->hwnd,&r);POINT center{(r.left+r.right)/2,(r.top+r.bottom)/2};float before=pin->zoom();SendMessageW(pin->hwnd,WM_MOUSEWHEEL,MAKEWPARAM(0,120),MAKELPARAM(center.x,center.y));check(pin->zoom()>before,"pin wheel handler zooms image");
@@ -51,14 +115,29 @@ int selfTest(HINSTANCE instance,const fs::path& directory) {
         if(app.capture->hwnd){SendMessageW(app.capture->hwnd,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(500,300));SendMessageW(app.capture->hwnd,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(40,50));SendMessageW(app.capture->hwnd,WM_LBUTTONUP,0,MAKELPARAM(40,50));pump();auto selected=app.records.front();check(waitSaved(selected) && selected->width==460 && selected->height==250,"real reverse-drag selection to archive pipeline");}
         size_t beforeCancel=app.records.size();app.capturing=true;app.capture=std::make_unique<Capture>(app,image,RECT{0,0,640,380});app.capture->create();SendMessageW(app.capture->hwnd,WM_KEYDOWN,VK_ESCAPE,0);pump();check(!app.capturing && !app.capture && app.records.size()==beforeCancel,"Escape cancels without creating history");
         if(!app.pins.empty()){HWND closing=app.pins.front()->hwnd;size_t before=app.pins.size();fs::path original=app.pins.front()->path();SendMessageW(closing,WM_CLOSE,0,0);pump();check(app.pins.size()==before-1 && fs::exists(original),"closing pin frees window and retains original PNG");}
+        if(!app.records.empty()) {
+            auto visible=app.records.front();app.pin(visible);HWND retainedPin=app.pins.back()->hwnd;size_t pinsBefore=app.pins.size(),recordsBefore=app.records.size();
+            app.dock->expand(true);InvalidateRect(app.dock->hwnd,nullptr,FALSE);SendMessageW(app.dock->hwnd,WM_PAINT,0,0);RECT fileButton{},removeButton{};
+            bool buttons=app.dock->recordButtons(visible->path,fileButton,removeButton);check(buttons && fileButton.right<=removeButton.left,"separate copy-file and delete buttons on actual card");
+            if(buttons) {
+                visible->saving=true;SendMessageW(app.dock->hwnd,WM_LBUTTONUP,0,MAKELPARAM((fileButton.left+fileButton.right)/2,(fileButton.top+fileButton.bottom)/2));visible->saving=false;
+                check(app.pins.size()==pinsBefore && app.records.size()==recordsBefore,"copy-file click does not pin or delete, and waits for saving");
+                auto beforePixels=readImage(visible->path);hiddenAcrossRestart=visible->path;
+                SendMessageW(app.dock->hwnd,WM_LBUTTONUP,0,MAKELPARAM((removeButton.left+removeButton.right)/2,(removeButton.top+removeButton.bottom)/2));
+                check(app.records.size()==recordsBefore-1 && std::none_of(app.records.begin(),app.records.end(),[&](const auto& r){return r->path==visible->path;}),"real delete button removes only software index");
+                auto afterPixels=readImage(visible->path);check(beforePixels && afterPixels && beforePixels->bgra==afterPixels->bgra,"deleted history original is still pixel-identical");
+                check(IsWindow(retainedPin) && app.pins.size()==pinsBefore,"removing history leaves existing pinned window intact");
+            }
+            if(!app.records.empty()){auto retained=app.records.front();size_t countBefore=app.records.size();fs::path blocked=app.data/L"history-index.txt.tmp";fs::create_directory(blocked);check(!app.hideRecord(retained) && app.records.size()==countBefore && fs::exists(retained->path),"index persistence failure retains history and source file");fs::remove(blocked);}
+        }
         // Capture only this program's opaque synthetic UI for visual review.
-        app.setEdge(Edge::Bottom);app.dock->expand(true);SetWindowDisplayAffinity(app.dock->hwnd,WDA_NONE);ShowWindow(app.dock->hwnd,SW_SHOWNOACTIVATE);UpdateWindow(app.dock->hwnd);DwmFlush();RECT horizontal;GetWindowRect(app.dock->hwnd,&horizontal);horizontal.left+=6;horizontal.top+=6;horizontal.right-=6;horizontal.bottom-=6;auto horizontalShot=captureDesktop(horizontal);check(horizontalShot && savePng(*horizontalShot,directory/(L"horizontal-preview_"+stamp()+L".png")),"native horizontal dock visual preview PNG");ShowWindow(app.dock->hwnd,SW_HIDE);app.setEdge(Edge::Right);
+        app.setEdge(Edge::Bottom);app.dock->expand(true);SetWindowDisplayAffinity(app.dock->hwnd,WDA_NONE);ShowWindow(app.dock->hwnd,SW_SHOWNOACTIVATE);readyPreviews(app);DwmFlush();RECT horizontal;GetWindowRect(app.dock->hwnd,&horizontal);horizontal.left+=6;horizontal.top+=6;horizontal.right-=6;horizontal.bottom-=6;auto horizontalShot=captureDesktop(horizontal);check(horizontalShot && savePng(*horizontalShot,directory/(L"horizontal-preview_"+stamp()+L".png")),"native horizontal dock visual preview PNG");ShowWindow(app.dock->hwnd,SW_HIDE);app.setEdge(Edge::Right);
         if(!app.pins.empty()){auto& pin=app.pins.front();SetWindowDisplayAffinity(pin->hwnd,WDA_NONE);pin->show(true);UpdateWindow(pin->hwnd);DwmFlush();RECT r;GetWindowRect(pin->hwnd,&r);r.left+=6;r.top+=6;r.right-=6;r.bottom-=6;auto pinShot=captureDesktop(r);check(pinShot && savePng(*pinShot,directory/(L"pin-preview_"+stamp()+L".png")),"native pinned image visual preview PNG");pin->show(false);}
-        app.dock->expand(true);SetWindowDisplayAffinity(app.dock->hwnd,WDA_NONE);ShowWindow(app.dock->hwnd,SW_SHOWNOACTIVATE);UpdateWindow(app.dock->hwnd);DwmFlush();RECT ui;GetWindowRect(app.dock->hwnd,&ui);ui.left+=6;ui.top+=6;ui.right-=6;ui.bottom-=6;auto shot=captureDesktop(ui);check(shot && savePng(*shot,directory/(L"dock-preview_"+stamp()+L".png")),"native dock visual preview PNG");ShowWindow(app.dock->hwnd,SW_HIDE);
+        app.dock->expand(true);SetWindowDisplayAffinity(app.dock->hwnd,WDA_NONE);ShowWindow(app.dock->hwnd,SW_SHOWNOACTIVATE);readyPreviews(app);DwmFlush();RECT ui;GetWindowRect(app.dock->hwnd,&ui);ui.left+=6;ui.top+=6;ui.right-=6;ui.bottom-=6;auto shot=captureDesktop(ui);check(shot && savePng(*shot,directory/(L"dock-preview_"+stamp()+L".png")),"native dock visual preview PNG");ShowWindow(app.dock->hwnd,SW_HIDE);
         PROCESS_MEMORY_COUNTERS memory{};if(GetProcessMemoryInfo(GetCurrentProcess(),&memory,sizeof(memory)))report<<"Working set with synthetic history and pins: "<<memory.WorkingSetSize/(1024*1024)<<" MiB\n";
         archived=app.records.size();app.saveConfig();app.shutdown();check(fs::exists(a->path) && fs::exists(b->path),"shutdown waits for save and preserves history");
     }
-    {App reopened(instance);check(reopened.init(directory/L"app-data",true),"restart initialization");check(reopened.records.size()>=archived,"PNG history survives restart");check(reopened.edge==Edge::Right,"dock preference survives restart");if(!reopened.records.empty()){auto record=reopened.records.front();reopened.requestThumbnail(record);auto until=GetTickCount64()+6000;while(record->previewLoading && GetTickCount64()<until){pump();MsgWaitForMultipleObjects(0,nullptr,FALSE,20,QS_ALLINPUT);}check(record->thumb && !record->previewFailed && !record->previewLoading,"history thumbnail asynchronously decodes without blocking UI");}}
+    {App reopened(instance);check(reopened.init(directory/L"app-data",true),"restart initialization");check(reopened.records.size()>=archived,"PNG history survives restart");check(reopened.edge==Edge::Right,"dock preference survives restart");check(!hiddenAcrossRestart.empty() && fs::exists(hiddenAcrossRestart) && std::none_of(reopened.records.begin(),reopened.records.end(),[&](const auto& r){return r->path==hiddenAcrossRestart;}),"removed index stays hidden after app restart, PNG remains");check(reopened.restoreHistory() && std::any_of(reopened.records.begin(),reopened.records.end(),[&](const auto& r){return r->path==hiddenAcrossRestart;}),"restore operation reindexes retained screenshot");if(!reopened.records.empty()){auto record=reopened.records.front();reopened.requestThumbnail(record);auto until=GetTickCount64()+6000;while(record->previewLoading && GetTickCount64()<until){pump();MsgWaitForMultipleObjects(0,nullptr,FALSE,20,QS_ALLINPUT);}check(record->thumb && !record->previewFailed && !record->previewLoading,"history thumbnail asynchronously decodes without blocking UI");}}
     report<<"\n"<<count<<" checks, "<<failures<<" failures\n";return failures?1:0;
 }
 }

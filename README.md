@@ -2,6 +2,8 @@
 
 为调试输出、文档对照和多次实验结果设计的轻量 Windows 桌面工具。原生 C++、Direct2D / DirectWrite 渲染，无浏览器、无 Qt、无需安装运行库。支持 Windows 10 / 11 x64。
 
+当前版本 **1.1.0**。下载仓库中的 `ScreenDock-portable.zip`，解压后双击 `ScreenDock.exe`；版本变更见 [CHANGELOG](CHANGELOG.md)。
+
 ## 作者
 
 1. Tang Ziheng（[@tangzihengtzh](https://github.com/tangzihengtzh)）
@@ -18,6 +20,8 @@
 - **清晰度**：100% 时按像素显示；其他比例默认平滑插值。右键开启“像素清晰模式”可使用最近邻插值，适合放大查看像素或调试界面。
 - **透明度**：**Shift+滚轮**，25%～100%；右键“恢复不透明”。
 - **复制**：标题栏“复制”或右键“复制原图”，复制的是原始图片，不受显示缩放影响。
+- **复制文件**：历史卡片“复制文件”，或便签右键“复制文件（粘贴到文件夹）”；打开目标工作文件夹，按 **Ctrl+V** 即可复制原始 PNG 文件。原图留在历史目录。保存中的图片需等保存完成再复制；复制成功按钮短暂显示“已复制”。
+- **删除记录**：历史卡片“删除记录”只将该项移出软件列表，**不删除、移动或修改原始 PNG**，已打开的置顶便签继续显示；重新启动后仍保持移出状态。右键边栏 → “恢复已移出的记录”可重新显示所有保留的历史文件。
 - **关闭**：标题栏“×”或右键关闭便签；原始 PNG 继续保留。重新启动后便签不自动恢复，历史可重新点击打开。
 - **预览大小**：边栏内滚轮调整缩略图尺寸；**Shift+滚轮**浏览历史，也可使用底部 ‹ / › 翻页。
 - **四边 / 多显示器**：右键边条或展开栏右上角“···”，选择左、右、上、下或显示器；位置偏好自动保存。上下边使用横向缩略图布局。
@@ -28,7 +32,7 @@
 
 默认保存到 **EXE 旁边的 `data/history/`**；每张图片均为原始分辨率的无损 PNG，文件名包含本机时间和序号，例如 `20261011_163025_042_0.png`。历史文件不会自动清理。使用“历史文件”打开所在文件夹，或在便签右键“定位历史文件”。需要删除时用文件管理器操作，重启程序刷新历史。
 
-若 EXE 所在位置无法创建数据目录，会回退到 `%LOCALAPPDATA%/ScreenDock/history/`。“历史文件”总会打开实际使用的目录。配置保存在数据目录的 `settings.ini`。
+若 EXE 所在位置无法创建数据目录，会回退到 `%LOCALAPPDATA%/ScreenDock/history/`。“历史文件”总会打开实际使用的目录。配置保存在数据目录的 `settings.ini`，被移出的记录保存在 `history-index.txt`（仅记录文件名）；索引写入失败时保留原列表并提示。
 
 移动便携版本时可以复制整个 `dist` 文件夹（包括 data）到任意位置。也可用 `ScreenDock.exe --data-dir D:\MyScreenshots` 指定数据目录，该目录下会创建 `history` 子目录。
 
@@ -40,10 +44,12 @@
 
 ## 从源码构建
 
-需要 Visual Studio 2022 C++ 桌面开发组件、Windows SDK 与 CMake。项目目录中运行 `powershell -ExecutionPolicy Bypass -File .\build.ps1 -Test`。EXE 使用静态 MSVC 运行库。
+需要 Visual Studio 2022 C++ 桌面开发组件、Windows SDK 与 CMake。项目目录中运行 `powershell -ExecutionPolicy Bypass -File .\build.ps1 -Test`。EXE 使用静态 MSVC 运行库。构建脚本同时生成便携 ZIP，仅包含程序、README 和 CHANGELOG，不打包个人截图或配置。
 
 `--self-test <目录>` 运行自动测试并生成 `report.txt`、PNG 夹具和边栏视觉预览。测试涵盖框选裁剪、PNG 像素往返、四边停靠、置顶 HWND、滚轮消息、100% / 800% 缩放、截图选区消息管线、取消、保存、关闭保留文件和重启历史。自动消息验证不等同于全部真实鼠标交互、不同硬件的人工验收。
 
+1.1.0 新增删除按钮、索引持久化及恢复、后台保存期间移出、索引写入失败和 Unicode 文件剪贴板验证。剪贴板集成测试在独立子进程中先备份现有格式，测试实际卡片按钮、CF_HDROP 路径、COPY 标志和文件复制，再恢复原剪贴板内容；备份失败则中止该测试。文件复制由测试代码读取剪贴板路径后执行，资源管理器 Ctrl+V 的完整人工操作未自动化。
+
 ## 项目文件
 
-`src/core.*` 图片与后台任务；`src/ui.*` 原生绘制；`src/app.*` 生命周期与历史；`src/dock.cpp` 边栏；`src/pin.cpp` 便签；`src/capture.cpp` 截图；`tests/self_test.cpp` 自动验证。计划与验证记录位于 `docs/`。
+`src/core.*` 图片、文件剪贴板与后台任务；`src/history_index.*` 软件历史排除索引；`src/ui.*` 原生绘制；`src/app.*` 生命周期与历史；`src/dock.cpp` 边栏；`src/pin.cpp` 便签；`src/capture.cpp` 截图；`tests/self_test.cpp` 自动验证。计划与验证记录位于 `docs/`。

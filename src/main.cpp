@@ -2,8 +2,9 @@
 #include <exception>
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    HRESULT com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(com))return 1;
     int argc=0;LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);int result=0;
+    if(argc==4 && std::wstring(argv[1])==L"--clipboard-test") {result=sd::clipboardSelfTest(argv[2],argv[3]);LocalFree(argv);return result;}
+    HRESULT com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(com)){if(argv)LocalFree(argv);return 1;}
     try {
         wchar_t exe[32768];DWORD count=GetModuleFileNameW(nullptr,exe,32768);if(!count || count>=32768)throw std::runtime_error("Executable path unavailable");
         sd::fs::path directory=sd::fs::path(exe).parent_path()/L"data";
