@@ -2,7 +2,7 @@
 
 为调试输出、文档对照和多次实验结果设计的轻量 Windows 桌面工具。原生 C++、Direct2D / DirectWrite 渲染，无浏览器、无 Qt、无需安装运行库。支持 Windows 10 / 11 x64。
 
-当前版本 **1.2.0**。下载仓库中的 `ScreenDock-portable.zip`，解压后双击 `ScreenDock.exe`；版本变更见 [CHANGELOG](CHANGELOG.md)。
+当前版本 **1.2.1**。下载仓库中的 `ScreenDock-portable.zip`，解压后双击 `ScreenDock.exe`；版本变更见 [CHANGELOG](CHANGELOG.md)。
 
 ## 作者
 
@@ -11,7 +11,7 @@
 
 ## 开始使用
 
-双击 `dist/ScreenDock.exe`。默认在选定显示器右侧中央出现一条薄荷绿色小边条；鼠标移入展开，离开约 0.65 秒后收起。程序也显示在系统托盘中。
+双击 `dist/ScreenDock.exe`。默认在选定显示器右侧中央出现一条薄荷绿色小边条；鼠标移入立即展开，移开展开区域立即收起。操作右键菜单时保持展开，菜单关闭后若鼠标在外便立即收起。程序也显示在系统托盘中。
 
 - **截图**：边栏“＋ 截图”或全局 **Ctrl+Alt+A**；拖动框选，松开鼠标保存。**Esc / 右键**取消。截图会排除本工具的边栏和便签。
 - **置顶**：点击历史缩略图，在屏幕侧面打开置顶便签。默认新截图会自动置顶，右键边栏可取消该选项。重复点击同一截图会显示已有便签。
@@ -49,7 +49,7 @@
 
 需要 Visual Studio 2022 C++ 桌面开发组件、Windows SDK 与 CMake。项目目录中运行 `powershell -ExecutionPolicy Bypass -File .\build.ps1 -Test`。EXE 使用静态 MSVC 运行库。构建脚本同时生成便携 ZIP，仅包含程序、README 和 CHANGELOG，不打包个人截图或配置。
 
-**电脑正在进行其他工作时**，运行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -BackgroundTest`，只执行后台自启动测试。该测试不创建窗口、不显示边栏、不截图、不操作剪贴板，仅在隔离的测试注册表树内验证启用 / 禁用和路径参数，结束后清理测试树。`-Test` 会执行包含窗口和剪贴板操作的完整测试，两种开关不能同时使用。也可用 `ctest --test-dir build -C Release -L background --no-tests=error --output-on-failure` 单独运行后台测试。
+**电脑正在进行其他工作时**，运行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -BackgroundTest`，只执行后台自启动及边栏消息测试。自启动测试在隔离的测试注册表树内验证启用 / 禁用和路径参数，结束后清理测试树；边栏测试仅向始终隐藏的测试 HWND 发送消息，验证进入展开、离开同步收起和菜单保护。两者均不显示窗口、不移动真实鼠标、不截图、不操作剪贴板，也不关闭或重启正在使用的程序。`-Test` 会执行包含前台窗口和剪贴板操作的完整测试，两种开关不能同时使用。也可用 `ctest --test-dir build -C Release -L background --no-tests=error --output-on-failure` 单独运行后台测试。
 
 `--self-test <目录>` 运行自动测试并生成 `report.txt`、PNG 夹具和边栏视觉预览。测试涵盖框选裁剪、PNG 像素往返、四边停靠、置顶 HWND、滚轮消息、100% / 800% 缩放、截图选区消息管线、取消、保存、关闭保留文件和重启历史。自动消息验证不等同于全部真实鼠标交互、不同硬件的人工验收。
 
@@ -57,4 +57,4 @@
 
 ## 项目文件
 
-`src/core.*` 图片、文件剪贴板与后台任务；`src/history_index.*` 软件历史排除索引；`src/startup.*` 当前用户自启动注册；`src/ui.*` 原生绘制；`src/app.*` 生命周期与历史；`src/dock.cpp` 边栏；`src/pin.cpp` 便签；`src/capture.cpp` 截图；`tests/self_test.cpp` 窗口与剪贴板验证；`tests/startup_test.cpp` 自启动后台验证。计划与验证记录位于 `docs/`。
+`src/core.*` 图片、文件剪贴板与后台任务；`src/history_index.*` 软件历史排除索引；`src/startup.*` 当前用户自启动注册；`src/ui.*` 原生绘制；`src/app.*` 生命周期与历史；`src/dock.cpp` 边栏；`src/pin.cpp` 便签；`src/capture.cpp` 截图；`tests/self_test.cpp` 前台窗口与剪贴板验证；`tests/startup_test.cpp` 自启动后台验证；`tests/dock_background_test.cpp` 隐藏边栏消息验证。计划与验证记录位于 `docs/`。

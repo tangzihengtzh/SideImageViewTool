@@ -5,7 +5,7 @@
 #include <shellapi.h>
 namespace sd {
 constexpr UINT TrayMessage=WM_APP+1, SaveDone=WM_APP+2, CaptureDone=WM_APP+3, RemovePin=WM_APP+4, ThumbDone=WM_APP+5;
-constexpr UINT HotkeyId=0x5344, CaptureTimer=2, HoverTimer=1;
+constexpr UINT HotkeyId=0x5344, CaptureTimer=2, CopyFeedbackTimer=1;
 struct Record {
     fs::path path;std::wstring label;Picture thumb;Picture pending;
     UINT width=0,height=0;bool saving=false,failed=false,previewLoading=false,previewFailed=false;
@@ -17,12 +17,12 @@ class Dock {
     struct CardHit {size_t index;D2D1_RECT_F body,copyFile,remove;};
     std::vector<CardHit> cards_;fs::path copiedPath_;ULONGLONG copiedUntil_=0;
     D2D1_RECT_F shot_{},paste_{},folder_{},menu_{},previous_{},next_{};
-    void paint();LRESULT message(UINT,WPARAM,LPARAM);
+    void paint();void trackMouseLeave();LRESULT message(UINT,WPARAM,LPARAM);
     static LRESULT CALLBACK proc(HWND,UINT,WPARAM,LPARAM);
 public:
-    HWND hwnd=nullptr;bool expanded=false;bool menuOpen=false;ULONGLONG leaveAt=0;
+    HWND hwnd=nullptr;bool expanded=false;bool menuOpen=false;
     explicit Dock(App& app):app_(app){};~Dock();
-    bool create();void expand(bool value);void reposition();void refresh(bool newest=false);void showMenu(POINT p);
+    bool create();void expand(bool value);void reposition();void refresh(bool newest=false);void showMenu(POINT p);void collapseIfOutside();
     int thumbnailSize() const {return thumbSize_;}
     bool recordButtons(const fs::path& path,RECT& copy,RECT& remove) const;
 };
@@ -73,4 +73,5 @@ public:
 };
 int selfTest(HINSTANCE instance,const fs::path& directory);
 int clipboardSelfTest(const fs::path& source,const fs::path& destination);
+int dockBackgroundTest(HINSTANCE instance,const fs::path& directory);
 }

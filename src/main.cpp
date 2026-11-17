@@ -4,6 +4,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     int argc=0;LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);int result=0;
     if(argc==4 && std::wstring(argv[1])==L"--clipboard-test") {result=sd::clipboardSelfTest(argv[2],argv[3]);LocalFree(argv);return result;}
+    if(argc==3 && std::wstring(argv[1])==L"--dock-background-test") {result=sd::dockBackgroundTest(instance,argv[2]);LocalFree(argv);return result;}
     HRESULT com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(com)){if(argv)LocalFree(argv);return 1;}
     try {
         wchar_t exe[32768];DWORD count=GetModuleFileNameW(nullptr,exe,32768);if(!count || count>=32768)throw std::runtime_error("Executable path unavailable");

@@ -22,9 +22,19 @@ void Dock::reposition() {
     SetWindowPos(hwnd,HWND_TOPMOST,r.left,r.top,r.right-r.left,r.bottom-r.top,SWP_NOACTIVATE);graphics_.reset();InvalidateRect(hwnd,nullptr,FALSE);
 }
 void Dock::expand(bool value) {
-    if(expanded==value)return;expanded=value;leaveAt=0;mouse_={-1,-1};
-    if(value)SetTimer(hwnd,HoverTimer,120,nullptr);else KillTimer(hwnd,HoverTimer);
+    if(expanded==value)return;expanded=value;mouse_={-1,-1};
     reposition();
+}
+void Dock::trackMouseLeave() {
+    if(tracking_)return;
+    TRACKMOUSEEVENT event{sizeof(event),TME_LEAVE,hwnd,0};tracking_=TrackMouseEvent(&event)!=FALSE;
+}
+void Dock::collapseIfOutside() {
+    if(!expanded || menuOpen || app_.capturing)return;
+    POINT point{};RECT rectangle{};
+    if(!GetCursorPos(&point) || !GetWindowRect(hwnd,&rectangle))return;
+    if(!PtInRect(&rectangle,point))expand(false);
+    else if(WindowFromPoint(point)==hwnd)trackMouseLeave();
 }
 void Dock::refresh(bool newest) {if(newest)first_=0;graphics_.bitmaps.clear();InvalidateRect(hwnd,nullptr,FALSE);}
 bool Dock::recordButtons(const fs::path& path,RECT& copy,RECT& remove) const {
@@ -105,6 +115,7 @@ void Dock::showMenu(POINT p) {
     AppendMenuW(m,MF_STRING|(app_.autoPin?MF_CHECKED:0),30,L"新截图自动置顶");AppendMenuW(m,MF_STRING,31,L"关闭全部便签（保留图片文件）");AppendMenuW(m,MF_STRING,33,L"恢复已移出的记录");AppendMenuW(m,MF_STRING,32,L"收起边栏");AppendMenuW(m,MF_SEPARATOR,0,nullptr);AppendMenuW(m,MF_STRING,99,L"退出 ScreenDock");
     SetForegroundWindow(hwnd);UINT command=TrackPopupMenu(m,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,hwnd,nullptr);DestroyMenu(m);menuOpen=false;PostMessageW(hwnd,WM_NULL,0,0);
     if(command==1)app_.beginCapture();else if(command==2)app_.paste();else if(command==3)app_.openFolder();else if(command>=10 && command<=13)app_.setEdge(Edge(command-10));else if(command>=100 && command<100+app_.displays.size())app_.setMonitor(command-100);else if(command==30){app_.autoPin=!app_.autoPin;app_.saveConfig();}else if(command==31){app_.pins.clear();refresh();}else if(command==33)app_.restoreHistory();else if(command==34)app_.toggleStartup();else if(command==32)expand(false);else if(command==99)PostQuitMessage(0);
+    collapseIfOutside();
 }
 LRESULT Dock::message(UINT msg,WPARAM wp,LPARAM lp) {
     bool handled=false;LRESULT result=app_.controller(msg,wp,lp,handled);if(handled)return result;
@@ -114,17 +125,19 @@ LRESULT Dock::message(UINT msg,WPARAM wp,LPARAM lp) {
     case WM_MOUSEACTIVATE:return MA_NOACTIVATE;
     case WM_MOUSEMOVE:
         mouse_={GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
+        trackMouseLeave();
         if(!expanded && !app_.capturing){expand(true);return 0;}
-        if(!tracking_){TRACKMOUSEEVENT event{sizeof(event),TME_LEAVE,hwnd,0};TrackMouseEvent(&event);tracking_=true;}
-        leaveAt=0;InvalidateRect(hwnd,nullptr,FALSE);return 0;
-    case WM_MOUSELEAVE:tracking_=false;mouse_={-1,-1};leaveAt=GetTickCount64();InvalidateRect(hwnd,nullptr,FALSE);return 0;
+        InvalidateRect(hwnd,nullptr,FALSE);return 0;
+    case WM_MOUSELEAVE:
+        tracking_=false;mouse_={-1,-1};
+        if(!menuOpen && !app_.capturing)expand(false);
+        InvalidateRect(hwnd,nullptr,FALSE);return 0;
     case WM_TIMER:
-        if(copiedUntil_ && GetTickCount64()>=copiedUntil_){copiedUntil_=0;InvalidateRect(hwnd,nullptr,FALSE);}
-        if(wp==HoverTimer && expanded && !menuOpen && !app_.capturing) {POINT p;GetCursorPos(&p);RECT r;GetWindowRect(hwnd,&r);if(PtInRect(&r,p))leaveAt=0;else if(!leaveAt)leaveAt=GetTickCount64();else if(GetTickCount64()-leaveAt>650)expand(false);}return 0;
+        if(wp==CopyFeedbackTimer){KillTimer(hwnd,CopyFeedbackTimer);copiedUntil_=0;InvalidateRect(hwnd,nullptr,FALSE);}return 0;
     case WM_LBUTTONUP:{POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};if(!expanded){expand(true);return 0;}if(inside(shot_,p))app_.beginCapture();else if(inside(paste_,p))app_.paste();else if(inside(folder_,p))app_.openFolder();else if(inside(menu_,p)){GetCursorPos(&p);showMenu(p);}else if(inside(previous_,p)){if(first_>0)first_=first_>cards_.size()?first_-cards_.size():0;refresh();}else if(inside(next_,p)){if(first_+cards_.size()<app_.records.size())first_+=cards_.size();refresh();}else for(const auto& hit:cards_)if(inside(hit.body,p) && hit.index<app_.records.size()){
         auto record=app_.records[hit.index];
         if(inside(hit.remove,p))app_.hideRecord(record);
-        else if(inside(hit.copyFile,p)){if(app_.copyRecordFile(record)){copiedPath_=record->path;copiedUntil_=GetTickCount64()+1500;refresh();}}
+        else if(inside(hit.copyFile,p)){if(app_.copyRecordFile(record)){copiedPath_=record->path;copiedUntil_=GetTickCount64()+1500;SetTimer(hwnd,CopyFeedbackTimer,1500,nullptr);refresh();}}
         else {app_.pin(record);refresh();}break;
     }return 0;}
     case WM_MOUSEWHEEL:
