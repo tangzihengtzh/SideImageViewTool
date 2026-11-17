@@ -1,4 +1,19 @@
-# 交付验证 · v1.1.0 · 2026-10-11
+# 交付验证
+
+## v1.2.0 · 2026-11-17
+
+产物：`dist/ScreenDock.exe`，464,896 字节（454 KiB），静态 MSVC 运行库。FileVersion 为 `1.2.0.0`，ProductVersion 为 `1.2.0`。
+
+- Visual Studio 2022 / MSVC / Windows SDK 10.0.22621，x64 Release 构建成功。
+- `ctest --test-dir build -C Release -L background --no-tests=error --output-on-failure` 仅运行 `ScreenDockStartupTests`，**25 项检查，0 个失败**；报告位于 `tests/output/startup-report.txt`。
+- 实际 Windows 注册表集成验证：未设置时关闭、读 / 关闭不创建键、启用并重读、更新程序位置、关闭及重复关闭、只删除自己的值、保留其他程序的值、无效命令不覆盖原设置、错误类型和未终止字符串返回错误、无效句柄失败不误报成功。
+- 用 Windows `CommandLineToArgvW` 验证命令行中的中文、空格、盘符根目录和尾部反斜杠，确保 EXE、`--startup`、`--data-dir` 和数据目录四个参数保持完整。
+- 后台测试只操作唯一的 `HKCU\Software\ScreenDock\Tests\Startup-<PID>-<tick>` 子树，结束时删除该测试树；不写实际 Windows Run 启动项，不创建窗口，不显示菜单，不截图，不接触剪贴板。
+- `build.ps1 -BackgroundTest` 提供后台构建、验证和便携打包入口；原有窗口 / 剪贴板测试标记为 foreground，本次不执行。
+
+**验收范围：** 按用户要求未启动应用进行前台测试，未做重启、注销 / 登录、真实菜单点击和任务管理器联动实测。菜单接线、`--startup` 参数分支和已有实例不展开的分支通过源码审阅及 Release 编译检查。启用后的实际登录启动仍受 Windows 任务管理器和系统策略控制。本次没有为用户开启自启动，也没有启动新版程序。
+
+## v1.1.0 · 2026-10-11（历史记录，本次未重跑）
 
 产物：`dist/ScreenDock.exe`，458,240 字节（约 448 KiB），静态 MSVC 运行库。FileVersion 为 `1.1.0.0`，ProductVersion 为 `1.1.0`。源码、构建文件、说明与测试均位于独立的 ScreenDock 目录。
 

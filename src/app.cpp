@@ -100,6 +100,23 @@ bool App::copyRecordFile(const std::shared_ptr<Record>& record) {
 void App::paste() {auto image=pastePicture(dock->hwnd);if(image)add(image,autoPin);else notify(L"剪贴板没有可读取的图片。先复制图片，再点“粘贴”。");}
 void App::setEdge(Edge value) {edge=value;saveConfig();dock->reposition();}
 void App::setMonitor(size_t index) {if(index<displays.size()){monitor=index;saveConfig();dock->reposition();}}
+bool App::queryStartup(bool& enabled) const {return startup_.query(enabled)==ERROR_SUCCESS;}
+void App::toggleStartup() {
+    bool enabled=false;LSTATUS status=startup_.query(enabled);
+    if(status!=ERROR_SUCCESS){notify(L"无法读取开机自启动设置："+lastError(DWORD(status)),true);return;}
+    std::wstring command;
+    if(!enabled) {
+        wchar_t executable[32768];DWORD count=GetModuleFileNameW(nullptr,executable,32768);
+        if(!count || count>=32768){notify(L"无法获取程序路径，自启动设置未更改。",true);return;}
+        std::error_code ec;auto directory=fs::absolute(data,ec);
+        if(ec){notify(L"无法获取截图数据目录，自启动设置未更改。",true);return;}
+        command=startupCommand(fs::path(executable),directory);
+        if(command.size()>260){notify(L"程序或数据目录路径过长，超出 Windows 自启动命令的 260 字符限制。请移动到较短路径后再开启。",true);return;}
+    }
+    status=startup_.setEnabled(!enabled,command);
+    if(status!=ERROR_SUCCESS){notify(L"无法更改开机自启动设置："+lastError(DWORD(status)),true);return;}
+    notify(enabled?L"已关闭开机自启动。":L"已开启开机自启动：下次登录 Windows 时以收起边栏启动，仅对当前用户生效。");
+}
 void App::hidePins(bool hidden) {for(auto& p:pins)p->show(!hidden && !testMode);}
 void App::shutdown() {
     if(shuttingDown)return;shuttingDown=true;

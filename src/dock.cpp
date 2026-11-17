@@ -100,9 +100,11 @@ void Dock::showMenu(POINT p) {
     AppendMenuW(m,MF_STRING,1,L"区域截图\tCtrl+Alt+A");AppendMenuW(m,MF_STRING,2,L"粘贴剪贴板图片");AppendMenuW(m,MF_STRING,3,L"打开截图历史");AppendMenuW(m,MF_SEPARATOR,0,nullptr);
     const wchar_t* names[]={L"左侧",L"右侧",L"顶部",L"底部"};for(int i=0;i<4;++i)AppendMenuW(edges,MF_STRING|(int(app_.edge)==i?MF_CHECKED:0),10+i,names[i]);AppendMenuW(m,MF_POPUP,reinterpret_cast<UINT_PTR>(edges),L"停靠位置");
     for(size_t i=0;i<app_.displays.size();++i){auto label=L"显示器 "+std::to_wstring(i+1)+L"  "+app_.displays[i].name;AppendMenuW(screens,MF_STRING|(app_.monitor==i?MF_CHECKED:0),100+i,label.c_str());}AppendMenuW(m,MF_POPUP,reinterpret_cast<UINT_PTR>(screens),L"停靠显示器");
+    bool startup=false;bool startupReadable=app_.queryStartup(startup);
+    AppendMenuW(m,MF_STRING|(startup?MF_CHECKED:0)|(startupReadable?0:MF_GRAYED),34,L"开机自启动（当前用户）");
     AppendMenuW(m,MF_STRING|(app_.autoPin?MF_CHECKED:0),30,L"新截图自动置顶");AppendMenuW(m,MF_STRING,31,L"关闭全部便签（保留图片文件）");AppendMenuW(m,MF_STRING,33,L"恢复已移出的记录");AppendMenuW(m,MF_STRING,32,L"收起边栏");AppendMenuW(m,MF_SEPARATOR,0,nullptr);AppendMenuW(m,MF_STRING,99,L"退出 ScreenDock");
     SetForegroundWindow(hwnd);UINT command=TrackPopupMenu(m,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,hwnd,nullptr);DestroyMenu(m);menuOpen=false;PostMessageW(hwnd,WM_NULL,0,0);
-    if(command==1)app_.beginCapture();else if(command==2)app_.paste();else if(command==3)app_.openFolder();else if(command>=10 && command<=13)app_.setEdge(Edge(command-10));else if(command>=100 && command<100+app_.displays.size())app_.setMonitor(command-100);else if(command==30){app_.autoPin=!app_.autoPin;app_.saveConfig();}else if(command==31){app_.pins.clear();refresh();}else if(command==33)app_.restoreHistory();else if(command==32)expand(false);else if(command==99)PostQuitMessage(0);
+    if(command==1)app_.beginCapture();else if(command==2)app_.paste();else if(command==3)app_.openFolder();else if(command>=10 && command<=13)app_.setEdge(Edge(command-10));else if(command>=100 && command<100+app_.displays.size())app_.setMonitor(command-100);else if(command==30){app_.autoPin=!app_.autoPin;app_.saveConfig();}else if(command==31){app_.pins.clear();refresh();}else if(command==33)app_.restoreHistory();else if(command==34)app_.toggleStartup();else if(command==32)expand(false);else if(command==99)PostQuitMessage(0);
 }
 LRESULT Dock::message(UINT msg,WPARAM wp,LPARAM lp) {
     bool handled=false;LRESULT result=app_.controller(msg,wp,lp,handled);if(handled)return result;

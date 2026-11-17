@@ -1,6 +1,7 @@
 #pragma once
 #include "ui.h"
 #include "history_index.h"
+#include "startup.h"
 #include <shellapi.h>
 namespace sd {
 constexpr UINT TrayMessage=WM_APP+1, SaveDone=WM_APP+2, CaptureDone=WM_APP+3, RemovePin=WM_APP+4, ThumbDone=WM_APP+5;
@@ -52,6 +53,7 @@ class App {
     HICON icon_=nullptr;bool trayAdded_=false;std::unique_ptr<Worker> worker_;
     std::atomic<unsigned> sequence_{0};
     HistoryIndex historyIndex_;
+    StartupRegistration startup_;
 public:
     HINSTANCE instance;fs::path data,history,config;std::unique_ptr<Dock> dock;
     std::vector<std::shared_ptr<Record>> records;std::vector<std::unique_ptr<Pin>> pins;std::unique_ptr<Capture> capture;
@@ -66,6 +68,7 @@ public:
     void saveComplete(SaveResult* result);void shutdown();LRESULT controller(UINT,WPARAM,LPARAM,bool& handled);
     void requestThumbnail(const std::shared_ptr<Record>& record);
     bool hideRecord(const std::shared_ptr<Record>& record);bool restoreHistory();bool copyRecordFile(const std::shared_ptr<Record>& record);
+    bool queryStartup(bool& enabled) const;void toggleStartup();
     HICON icon() const {return icon_;}
 };
 int selfTest(HINSTANCE instance,const fs::path& directory);

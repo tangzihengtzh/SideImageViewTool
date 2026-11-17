@@ -8,17 +8,18 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int) {
     try {
         wchar_t exe[32768];DWORD count=GetModuleFileNameW(nullptr,exe,32768);if(!count || count>=32768)throw std::runtime_error("Executable path unavailable");
         sd::fs::path directory=sd::fs::path(exe).parent_path()/L"data";
-        bool testing=false;sd::fs::path testDirectory;
+        bool testing=false,startupLaunch=false;sd::fs::path testDirectory;
         for(int i=1;i<argc;++i) {
             std::wstring arg=argv[i];
             if(arg==L"--self-test" && i+1<argc){testing=true;testDirectory=sd::fs::absolute(argv[++i]);}
             else if(arg==L"--data-dir" && i+1<argc)directory=sd::fs::absolute(argv[++i]);
-            else {MessageBoxW(nullptr,L"用法：ScreenDock.exe [--data-dir 文件夹]\n测试：ScreenDock.exe --self-test 输出文件夹",L"ScreenDock",MB_OK);LocalFree(argv);CoUninitialize();return 2;}
+            else if(arg==L"--startup")startupLaunch=true;
+            else {MessageBoxW(nullptr,L"用法：ScreenDock.exe [--data-dir 文件夹] [--startup]\n测试：ScreenDock.exe --self-test 输出文件夹",L"ScreenDock",MB_OK);LocalFree(argv);CoUninitialize();return 2;}
         }
         if(testing)result=sd::selfTest(instance,testDirectory);
         else {
             HANDLE single=CreateMutexW(nullptr,TRUE,L"Local\\ScreenDock.User.Instance.v1");
-            if(single && GetLastError()==ERROR_ALREADY_EXISTS) {HWND existing=FindWindowW(L"ScreenDock.Edge",nullptr);if(existing){PostMessageW(existing,sd::TrayMessage,0,WM_LBUTTONUP);}CloseHandle(single);LocalFree(argv);CoUninitialize();return 0;}
+            if(single && GetLastError()==ERROR_ALREADY_EXISTS) {if(!startupLaunch){HWND existing=FindWindowW(L"ScreenDock.Edge",nullptr);if(existing){PostMessageW(existing,sd::TrayMessage,0,WM_LBUTTONUP);}}CloseHandle(single);LocalFree(argv);CoUninitialize();return 0;}
             {
                 sd::App app(instance);
                 if(!app.init(directory)) {MessageBoxW(nullptr,L"启动失败：无法创建数据目录或窗口。",L"ScreenDock",MB_ICONERROR);result=1;}

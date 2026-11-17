@@ -1,5 +1,6 @@
-param([switch]$Test)
+param([switch]$Test, [switch]$BackgroundTest)
 $ErrorActionPreference = 'Stop'
+if ($Test -and $BackgroundTest) { throw 'Test 与 BackgroundTest 不能同时使用；后台验证请仅指定 BackgroundTest。' }
 Push-Location -LiteralPath $PSScriptRoot
 try {
     & cmake -S . -B build -G 'Visual Studio 17 2022' -A x64
@@ -11,6 +12,10 @@ try {
     if ($Test) {
         & ctest --test-dir build -C Release --output-on-failure
         if ($LASTEXITCODE -ne 0) { throw '自动验证失败' }
+    }
+    if ($BackgroundTest) {
+        & ctest --test-dir build -C Release -L background --no-tests=error --output-on-failure
+        if ($LASTEXITCODE -ne 0) { throw '后台验证失败' }
     }
     $packageFiles = @('dist/ScreenDock.exe', 'dist/README.md', 'dist/CHANGELOG.md') | ForEach-Object { Join-Path $PSScriptRoot $_ }
     $packagePath = Join-Path $PSScriptRoot 'ScreenDock-portable.zip'
